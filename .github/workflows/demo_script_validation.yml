@@ -1,0 +1,27 @@
+#Name of the workflow
+name: Validation of the scripts collection
+
+#Triggers to run the workflow
+on:
+  workflow_dispatch:
+    inputs:
+      simulate_failure:
+        type: boolean
+        description: Simulate workflow failure
+
+jobs:
+  validation:
+    runs-on: windows-latest
+    steps:
+    - name: GitHub Script
+      uses: actions/github-script@v7.0.1
+      with:
+        # The script to run
+        script: |
+          echo "Test"
+    - name: Fail run
+      if: inputs.simulate_failure == true
+      run: exit 1
+          
+
+          
