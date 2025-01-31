@@ -1,0 +1,139 @@
+name: "Continuous-Quality"
+description: "Run BDD and UI tests after deployment"
+inputs:
+  environment:
+    description: "Environment to deploy resources to"
+    required: true
+    default: "dev"
+  SERVICEPRINCIPAL_PASSWORD:
+    description: "Service principal client secret"
+    required: true
+  MS_TEAMS_WEBHOOK_URI:
+    description: "MS Teams webhook uri"
+    required: true
+  token:
+    description: "GitHub token"
+    required: true
+  repoName:
+    description: "Repository name"
+    required: true
+  prefix:
+    description: "CUS prefix"
+    required: true
+  suffix:
+    description: "TEAM suffix"
+    required: true
+  servicePrincipleClientId:
+    description: "Service principal client ID"
+    required: true
+
+outputs:
+  bdd_status:
+    description: "Status"
+    value: ${{ steps.bddtests.outcome }}
+  ui_status:
+    description: "Status"
+    value: ${{ steps.uitests.outcome }}
+runs:
+  using: "composite"
+  steps:
+    # This action is used to send workflow status to subscribed Microsoft Teams channel
+    - name: Microsoft Teams Deploy Card
+      uses: toko-bifrost/ms-teams-deploy-card@3.1.2
+      if: always()
+      with:
+        # Microsoft Teams webhook URI
+        webhook-uri: ${{ inputs.MS_TEAMS_WEBHOOK_URI }}
+        # Github token
+        github-token: ${{ inputs.token }}
+        # Name of the environment (won't be included in the card if none)
+        environment: ${{ inputs.environment }}
+        # Show the MS Teams card upon failure only of this Github Actions job
+        show-on-failure: true
+        custom-facts: |
+          - name: Stage
+            value: BDD Automated Tests - ${{ inputs.environment }}
+
+    # This action is used to download the build artifacts, which has been published by the latest run of CI pipeline
+    - name: Download build artifacts
+      uses: dawidd6/action-download-artifact@v2
+      with:
+        workflow: continuous-integration.yml
+
+    #This action is used to update app settings with current environment variable values
+    - name: Update app config for BDD Tests
+      run: D:\a\${{ inputs.repoName }}\${{ inputs.repoName }}\drop\${{ inputs.repoName }}\IaC\scripts\UpdateVariablesAtRunTime.ps1 -configPath D:\a\${{ inputs.repoName }}\${{ inputs.repoName }}\drop\${{ inputs.repoName }}\src\main\resources\application.properties -keyVaultUri "https://${{ inputs.prefix }}keyvaultcoupons${{ inputs.environment }}${{ inputs.suffix }}.vault.azure.net/" -instrumentationKey "123456" -sourceUrl "jdbc:mysql://${{ inputs.prefix }}-dojo-coupon-${{ inputs.environment }}-${{ inputs.suffix }}.mysql.database.azure.com:3306/hotel_coupon?verifyServerCertificate=false&useSSL=false&requireSSL=false" -appUrl "https://${{ inputs.prefix }}-dojo-coupon-${{ inputs.environment }}-${{ inputs.suffix }}.azurewebsites.net" -principalId "${{ inputs.servicePrincipleClientId }}" -principalPass "${{ inputs.SERVICEPRINCIPAL_PASSWORD }}"
+      shell: powershell
+
+    #This action is used to execute BDD Tests
+    - name: Run BDD Tests
+      id: bddtests
+      run: mvn -B verify -Dit.test=CouponControllerBDDIT verify --file "D:\a\${{ inputs.repoName }}\${{ inputs.repoName }}\drop\${{ inputs.repoName }}\pom.xml"
+      shell: bash
+
+    # This action is used to send workflow status to subscribed Microsoft Teams channel
+    - name: Microsoft Teams Deploy Card
+      uses: toko-bifrost/ms-teams-deploy-card@3.1.2
+      if: always()
+      with:
+        # Microsoft Teams webhook URI
+        webhook-uri: ${{ inputs.MS_TEAMS_WEBHOOK_URI }}
+        # Github token
+        github-token: ${{ inputs.token }}
+        # Name of the environment (won't be included in the card if none)
+        environment: ${{ inputs.environment }}
+        # Show the MS Teams card upon failure only of this Github Actions job
+        show-on-failure: true
+        custom-facts: |
+          - name: Stage
+            value: UI Tests - ${{ inputs.environment }}
+
+    - name: Setup NuGet # This action downloads and installs a given version of NuGet.exe
+      uses: NuGet/setup-nuget@v1.0.5
+      with:
+        nuget-version: latest
+
+    # This action installs/updates the chrome version to the latest version in the agent    
+    - name: Update Chrome Version
+      run: |
+        $theurl = "http://dl.google.com/edgedl/chrome/install/GoogleChromeStandaloneEnterprise64.msi"
+        mkdir c:\tmp
+        $output = "c:\tmp\chrome.msi"
+        Invoke-WebRequest -Uri $theurl -OutFile $output -ErrorAction SilentlyContinue
+        msiexec /q /i c:\tmp\chrome.msi
+        start-sleep -Seconds 120 # sleep for 5 mins just to allow updates to be processed 
+        Remove-Item -Path c:\tmp\chrome.msi -Force
+        nuget install Selenium.WebDriver.ChromeDriver -ExcludeVersion
+        Copy-Item D:\a\${{ inputs.repoName }}\${{ inputs.repoName }}\Selenium.WebDriver.ChromeDriver\driver\win32\chromedriver.exe D:\a\${{ inputs.repoName }}\${{ inputs.repoName }}\drop\${{ inputs.repoName }}\src\test\resources\binaries -force
+      shell: powershell
+
+    #This action is used to update app settings with current environment variable values
+    - name: Update app config for UI Tests
+      run: D:\a\${{ inputs.repoName }}\${{ inputs.repoName }}\drop\${{ inputs.repoName }}\IaC\scripts\UpdateVariablesAtRunTime.ps1 -configPath D:\a\${{ inputs.repoName }}\${{ inputs.repoName }}\drop\${{ inputs.repoName }}\src\main\resources\application.properties -keyVaultUri "https://${{ inputs.prefix }}keyvaultcoupons${{ inputs.environment }}${{ inputs.suffix }}.vault.azure.net/" -instrumentationKey "83a016af-e6ca-452d-a624-0dbf47011e2d" -sourceUrl "jdbc:mysql://${{ inputs.prefix }}-dojo-coupon-${{ inputs.environment }}-${{ inputs.suffix }}.mysql.database.azure.com:3306/hotel_coupon?verifyServerCertificate=false&useSSL=false&requireSSL=false" -appUrl "https://${{ inputs.prefix }}-dojo-coupon-${{ inputs.environment }}-${{ inputs.suffix }}.azurewebsites.net" -principalId "${{ inputs.servicePrincipleClientId }}" -principalPass "${{ inputs.SERVICEPRINCIPAL_PASSWORD }}"
+      shell: powershell
+      
+    #This action is used to execute UI Tests
+    - name: Run UI Test
+      id: uitests
+      run: mvn -B verify -Dit.test=LoginUIIT#testInQA* verify --file "D:\a\${{ inputs.repoName }}\${{ inputs.repoName }}\drop\${{ inputs.repoName }}\pom.xml"
+      shell: bash
+
+    #Create ADO Bug on Failure for BDD Tests 
+    - name: Create ADO Bug on Failure for BDD Tests
+      uses: JasonEtco/create-an-issue@v2
+      if: steps.bddtests.outcome == 'failure'
+      env:
+        GITHUB_TOKEN: ${{ inputs.token }} 
+      with:
+        filename: .github/issues/bdd-issue-template.md
+        update_existing: true
+
+    #Create ADO Bug on Failure for UI Tests 
+    - name: Create ADO Bug on Failure for UI Tests
+      uses: JasonEtco/create-an-issue@v2
+      if: steps.uitests.outcome == 'failure'
+      env:
+        GITHUB_TOKEN: ${{ inputs.token }} 
+      with:
+        filename: .github/issues/ui-issue-template.md
+        update_existing: true

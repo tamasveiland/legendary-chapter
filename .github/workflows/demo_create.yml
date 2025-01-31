@@ -1,0 +1,154 @@
+name: Create demo repository
+
+on:
+  workflow_call:
+    inputs:
+      user_name:
+        description: The name of the user who created the repository
+        type: string
+        required: true
+      organization_name:
+        description: The name of the target organization
+        type: string
+        required: true
+      repository_name:
+        description: The name of the template repository
+        type: string
+        required: true
+    secrets:
+      DEVOPS_WITH_GITHUB_PAT: 
+        description: 'GitHub personal access token'
+        required: true
+  workflow_dispatch:
+    inputs:
+      user_name:
+        description: The name of the user who created the repository
+        type: string
+        required: true
+        default: msanzdelrio
+      organization_name:
+        description: The name of the target organization
+        type: string
+        required: true
+        default: margaritasdr
+      repository_name:
+        description: The name of the template repository
+        type: string
+        required: true 
+        default: tmpl-workflows-100 
+
+jobs:
+  create_demo:
+    name: Create Demo Repository and Resources
+    runs-on: ubuntu-20.04
+    steps:
+
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+        with:
+          path: template
+          ref: main
+
+      - name: Create target repository
+        id: create_repository
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.DEVOPS_WITH_GITHUB_PAT }}
+          script: |
+            github.rest.repos.createInOrg({
+              org: '${{ inputs.organization_name }}',
+              name: '${{ inputs.repository_name }}-${{ inputs.user_name }}',
+              visibility: 'private',
+            });
+
+      - name: Configure mirror repository
+        run: |
+          mkdir origin
+          cd origin
+          git config --global init.defaultBranch main
+          git config --global user.email "msanzdelrio@github.com"
+          git config --global user.name "Octobot"
+          git clone --bare https://${{ secrets.DEVOPS_WITH_GITHUB_PAT }}@github.com/${{ inputs.organization_name }}/${{ inputs.repository_name }}.git
+          cd ./${{ inputs.repository_name }}.git
+          git push --mirror https://${{ secrets.DEVOPS_WITH_GITHUB_PAT }}@github.com/${{ inputs.organization_name }}/${{ inputs.repository_name }}-${{ inputs.user_name }}.git
+          cd ..
+          cd ..
+          git clone https://${{ secrets.DEVOPS_WITH_GITHUB_PAT }}@github.com/${{ inputs.organization_name }}/${{ inputs.repository_name }}-${{ inputs.user_name }}.git target
+
+      - name: Update variables json file
+        id: update_variables_json
+        if: false
+        uses: actions/github-script@v6
+        with:
+          script: |
+            function updateJsonFile() {
+              var fs = require('fs');
+              var variables_file = require('./target/.github/variables/variables.json');
+              var previous_suffix = require('./template/previous-suffix.json');
+
+              variables_file.variables.find(item => item.name === 'repoName').value = '${{ inputs.repository_name }}-${{ inputs.user_name }}';
+              var new_suffix = previous_suffix.lastSequence + 1;
+              variables_file.variables.find(item => item.name === 'suffix').value = "" + new_suffix;
+              previous_suffix.lastSequence = new_suffix;
+
+              fs.writeFileSync('./target/.github/variables/variables.json', JSON.stringify(variables_file, null, 2));
+              fs.writeFileSync('./template/previous-suffix.json', JSON.stringify(previous_suffix, null, 2));
+            }
+            updateJsonFile();
+
+      - name: Update variables json file
+        id: update_variables_json_bash
+        run: |
+          
+          new_repo_name="${{ inputs.repository_name }}-${{ inputs.user_name }}"
+          echo "new_repo_name: $new_repo_name"
+          
+          previous_suffix=$(jq -r '.lastSequence' ./template/previous-suffix.json)
+          echo "previous_suffix: $previous_suffix"
+          
+          new_suffix=$((previous_suffix + 1))
+          echo "new_suffix: $new_suffix"
+
+          cd ./target
+          for b in `git branch -r | grep -v -- '->'`; do 
+            branch=${b##origin/}; 
+            echo "Branch: $branch"
+            
+            git checkout "$branch"
+            
+            jq --arg new_repo_name "$new_repo_name" '(.variables[] | select(.name == "repoName") | .value) = $new_repo_name' ./.github/variables/variables.json > ./.github/variables/variables.json.tmp \
+            && mv ./.github/variables/variables.json.tmp ./.github/variables/variables.json
+            
+            jq --arg new_suffix "$new_suffix" '(.variables[] | select(.name == "suffix") | .value) = $new_suffix' ./.github/variables/variables.json > ./.github/variables/variables.json.tmp \
+            && mv ./.github/variables/variables.json.tmp ./.github/variables/variables.json
+          
+            git add .
+            git commit -m "Updated variables"
+          done
+          
+          cd ..
+          jq --arg new_suffix "$new_suffix" '.lastSequence = $new_suffix' ./template/previous-suffix.json > ./template/previous-suffix.json.tmp \
+            && mv ./template/previous-suffix.json.tmp ./template/previous-suffix.json
+
+      - name: Push repositories updates
+        run: |
+          git config --global init.defaultBranch main
+          git config --global user.email "msanzdelrio@github.com"
+          git config --global user.name "Octobot"
+          cd template
+          git add ./previous-suffix.json
+          git commit -m "Updated suffix"
+          git branch -M main
+          git push -u origin main
+          cd ..
+          
+          cd target
+
+          for b in `git branch -r | grep -v -- '->'`; do 
+            branch=${b##origin/}; 
+            echo "Branch: $branch"
+
+            git checkout "$branch"
+            git branch -M "$branch"
+            git push -u origin "$branch"
+          done

@@ -1,0 +1,73 @@
+#Name of the workflow
+name: Continuous-Integration
+
+#Triggers to run the workflow
+on:
+  #TODO [CI]: Uncomment the below block to enable push & pull_request triggers on build workflow.
+  #push: #To trigger workflow when an update in pushed onto main branch
+  #  branches: [main]
+  #pull_request: #To trigger workflow when a PR is raised against main branch
+  #  branches: [main]
+  workflow_dispatch:
+    branches: [ main, users/** ]
+
+jobs:
+  # Build Job
+  build:
+    # The type of runner that the job will run on
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout Repository #Checkout the Repository into the agent
+      uses: actions/checkout@v2
+
+    #TODO [CI]: This action is used to send workflow status to subscribed Microsoft Teams channel. Remove the below if condition to enable the action
+    - name: Microsoft Teams Deploy Card
+      uses: toko-bifrost/ms-teams-deploy-card@3.1.2
+      if: ${{ false }}
+      with:
+        # Microsoft Teams webhook URI
+        webhook-uri: ${{ secrets.MS_TEAMS_WEBHOOK_URI }}
+        # Github token
+        github-token: ${{ github.token }}
+        # Name of the environment (won't be included in the card if none)
+        environment: build
+        # Show the MS Teams card upon failure only of this Github Actions job
+        show-on-failure: true
+
+    # This action is developed as an IP by the MCS team to use variable groups present in the .github/variables folder. For more details: https://github.com/marketplace/actions/set-variable
+    - name: Set Environment Variables - Organizational Details # Set Variables
+      uses: deep-mm/set-variables@v1.0
+      with:
+        variableFileName: "variables"
+
+    - name: Set up JDK 1.8 #Setup Java Development Kit
+      uses: actions/setup-java@v1
+      with:
+        java-version: 1.8
+
+    - name: Build with Maven #Maven Build
+      run: mvn -B clean package --file pom.xml
+      shell: bash
+
+    #TODO [CI]: This action is used to run unit tests in workflow. Remove the below if condition to enable the action
+    - name: Test Maven Project #Run Unit Tests
+      if: ${{ false }}
+      run: mvn test
+      shell: bash
+
+    - name: Copy Items to Upload Artifact folder #copy the files to publish as artifacts
+      run: |
+        New-Item -Path "D:\a\${{ env.repoName }}\" -Name "upload" -ItemType "directory"
+        $destinationRoot = "D:\a\${{ env.repoName }}\upload"
+        Copy-Item -Path "D:\a\${{ env.repoName }}\${{ env.repoName }}\web.config" -Recurse -Destination "D:\a\${{ env.repoName }}\${{ env.repoName }}\target" -Container
+        Copy-Item -Path "D:\a\${{ env.repoName }}\${{ env.repoName }}" -Recurse -Destination $destinationRoot -Container
+      shell: powershell
+
+    - name: Publish Artifact #Publish Artifacts to be consumed by the release pipeline
+      uses: actions/upload-artifact@v1
+      with:
+          name: drop
+          path: D:\a\${{ env.repoName }}\upload
+
+

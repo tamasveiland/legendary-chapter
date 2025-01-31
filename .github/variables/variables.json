@@ -1,0 +1,40 @@
+{
+  "variables": [
+    {
+      "name": "az_sk_path",
+      "value": "/home/runner/.local/share/Microsoft/AzSKLogs/"
+    },
+    {
+      "name": "slo_threshold",
+      "value": "20000.0"
+    },
+    {
+      "name": "slo_query",
+      "value": "/query?query=let%20tstart%3Dformat_datetime(now(-1440m)%2C%20%27yyyy-MM-dd%27)%3B%0Alet%20start%3Dtodatetime(tstart)%3B%0Alet%20end%3Dnow()%3B%0Alet%20timeGrain%3D1m%3B%0Alet%20dataset%3Drequests%0A%20%20%20%20%0A%20%20%20%20%7C%20where%20timestamp%20%3E%20start%20and%20timestamp%20%3C%20end%0A%3B%0Adataset%0A%7C%20summarize%20avg(duration)%20by%20bin(timestamp%2C%20timeGrain)%0A%7C%20extend%20request%3D%27Overall%27%0A%7C%20sort%20by%20avg_duration%20desc%0A"
+    },
+    {
+      "name": "latency_query",
+      "value": "/query?query=let%20tstart%3Dformat_datetime(now(-1440m)%2C%20%27yyyy-MM-dd%27)%3B%0Alet%20start%3Dtodatetime(tstart)%3B%0Alet%20end%3Dnow()%3B%0Alet%20dataset%3DavailabilityResults%0A%20%20%20%20%0A%20%20%20%20%7C%20where%20timestamp%20%3E%20start%20and%20timestamp%20%3C%20end%0A%3B%0Adataset%0A%7C%20project%20success%2C%20timestamp%0A%7C%20sort%20by%20timestamp%20desc%0A"
+    },
+    {
+      "name": "prefix",
+      "value": "<three-letters-prefix>"
+    },
+    {
+      "name": "suffix",
+      "value": "0"
+    },
+    {
+      "name": "subscriptionid",
+      "value": "<azure-subscription-id>"
+    },
+    {
+      "name": "repoName",
+      "value": "<repo-name>"
+    },
+    {
+      "name": "location",
+      "value": "eastus"
+    }
+  ]
+}

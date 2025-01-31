@@ -1,0 +1,119 @@
+name: "Continuous-Security"
+description: "Run OWASP and AZsk checks"
+inputs:
+  environment:
+    description: "Environment to deploy resources to"
+    required: true
+    default: "dev"
+  MS_TEAMS_WEBHOOK_URI:
+    description: "MS Teams webhook uri"
+    required: true
+  AZURE_CREDENTIALS:
+    description: "Azure credentials for login"
+    required: true
+  token:
+    description: "GitHub token"
+    required: true
+  repoName:
+    description: "Repository name"
+    required: true
+  prefix:
+    description: "CUS prefix"
+    required: true
+  suffix:
+    description: "TEAM suffix"
+    required: true
+  subscriptionid:
+    description: "ID of the subscription"
+    required: true
+  az_sk_path:
+    description: "Path to the AZSK folder"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+
+    # This action is used to send workflow status to subscribed Microsoft Teams channel
+    - name: Microsoft Teams Deploy Card
+      uses: toko-bifrost/ms-teams-deploy-card@3.1.2
+      if: always()
+      with:
+        # Microsoft Teams webhook URI
+        webhook-uri: ${{ inputs.MS_TEAMS_WEBHOOK_URI }}
+        # Github token
+        github-token: ${{ inputs.token }}
+        # Name of the environment (won't be included in the card if none)
+        environment: ${{ inputs.environment }}
+        # Show the MS Teams card upon failure only of this Github Actions job
+        show-on-failure: true
+        custom-facts: |
+          - name: Stage
+            value: OWASP Scan - ${{ inputs.environment }}
+
+    # This action is used to run OWASP ZAP Tests on the deployed web application
+    - name: OWASP ZAP Full Scan
+      id: owasptests
+      uses: zaproxy/action-full-scan@v0.4.0
+      with:
+        # Target URL
+        target: "https://${{ inputs.prefix }}-dojo-coupon-${{ inputs.environment }}-${{ inputs.suffix }}.azurewebsites.net"
+        # The action status will be set to fail if ZAP identifies any alerts during the full scan
+        fail_action: false
+        issue_title: "ZAP Scan - ${{ inputs.environment }}"
+
+    # This action is used to send workflow status to subscribed Microsoft Teams channel
+    - name: Microsoft Teams Deploy Card
+      uses: toko-bifrost/ms-teams-deploy-card@3.1.2
+      if: always()
+      with:
+        # Microsoft Teams webhook URI
+        webhook-uri: ${{ inputs.MS_TEAMS_WEBHOOK_URI }}
+        # Github token
+        github-token: ${{ inputs.token }}
+        # Name of the environment (won't be included in the card if none)
+        environment: ${{ inputs.environment }}
+        # Show the MS Teams card upon failure only of this Github Actions job
+        show-on-failure: true
+        custom-facts: |
+          - name: Stage
+            value: AZSK Scan - ${{ inputs.environment }}
+
+    # This action is used to login to Azure using the service principal credentials stored in secrets
+    - name: Login via Az module
+      uses: azure/login@v1
+      with:
+        creds: ${{inputs.AZURE_CREDENTIALS}}
+        enable-AzPSSession: true 
+    
+    # This action is used to install AzSK module
+    - name: Install Az-Sk Module
+      uses: azure/powershell@v1
+      with:
+        inlineScript: |
+          Install-Module AzSK -AllowClobber -SkipPublisherCheck -Force
+        azPSVersion: "latest"
+
+    - name: Login to Azure
+      uses: azure/login@v1
+      with:
+        creds: ${{ inputs.AZURE_CREDENTIALS }}
+        enable-AzPSSession: true
+
+    # This action is used to run AzSK Security Verification Tests
+    - name: Run AzSK Security Verification Tests
+      uses: azure/powershell@v1
+      with:
+        inlineScript: |
+          (echo "Y" | pwsh -Command Get-AzSKAzureServicesSecurityStatus -SubscriptionId  '${{ inputs.subscriptionid }}' -ResourceGroupNames '${{ inputs.prefix }}-Dojo-Coupon-${{ inputs.environment }}-${{ inputs.suffix }}' -DoNotOpenOutputFolder)
+          New-Item -Path "/home/runner/" -Name "upload" -ItemType "directory"
+          $destinationRoot = "/home/runner/upload/AzSk.zip"
+          Compress-Archive -LiteralPath ${{ inputs.az_sk_path }} -DestinationPath $destinationRoot
+        azPSVersion: "latest" 
+
+    # This action is used to publish the AZSK Results as artifacts. 
+    - name: Publish AzSK Results #Publish Artifact
+      uses: actions/upload-artifact@master
+      with:
+          name: azsk
+          path: "/home/runner/upload"

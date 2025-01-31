@@ -1,0 +1,105 @@
+name: "Continuous-Operation"
+description: "Run SLO checks"
+inputs:
+  environment:
+    description: "Environment to deploy resources to"
+    required: true
+    default: "dev"
+  MS_TEAMS_WEBHOOK_URI:
+    description: "MS Teams webhook uri"
+    required: true
+  AZURE_CREDENTIALS:
+    description: "Azure credentials for login"
+    required: true
+  token:
+    description: "GitHub token"
+    required: true
+  prefix: 
+    description: "Customer prefix"
+    required: true
+  suffix:
+    description: "Team suffix"
+    required: true
+  slo_query:
+    description: "SLO query"
+    required: true
+  slo_threshold:
+    description: "SLO threshold"
+    required: true
+  latency_query:
+    description: "Latency query"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    # This action is used to send workflow status to subscribed Microsoft Teams channel
+    - name: Microsoft Teams Deploy Card
+      uses: toko-bifrost/ms-teams-deploy-card@3.1.2
+      if: always()
+      with:
+        # Microsoft Teams webhook URI
+        webhook-uri: ${{ inputs.MS_TEAMS_WEBHOOK_URI }}
+        # Github token
+        github-token: ${{ inputs.token }}
+        # Name of the environment (won't be included in the card if none)
+        environment: prd
+        # Show the MS Teams card upon failure only of this Github Actions job
+        show-on-failure: true
+        custom-facts: |
+          - name: Stage
+            value: SLO Checks - prd
+
+    - name: Login to Azure # Login to Azure with credentials of service principal stored in secrets
+      uses: azure/login@v1
+      with:
+        creds: ${{ inputs.AZURE_CREDENTIALS }}
+
+    - name: Retrieve API_KEY and APP_ID # Retrieve API KEY and APP ID from Key Vault
+      uses: azure/CLI@1.0.4
+      id: appinsights_key
+      with:
+        inlineScript: |
+          slo_api_key_secret=$(az keyvault secret show --vault-name "${{ inputs.prefix }}keyvaultcoupons${{ inputs.environment }}${{ inputs.suffix }}" --name SLO-API-KEY --output json)
+          SLO_API_KEY=$(echo $slo_api_key_secret | jq .value | tr -d '"')
+          echo ::set-output name=SLO_API_KEY::$SLO_API_KEY
+
+          slo_app_id_secret=$(az keyvault secret show --vault-name "${{ inputs.prefix }}keyvaultcoupons${{ inputs.environment }}${{ inputs.suffix }}" --name SLO-APP-ID --output json)
+          SLO_APP_ID=$(echo $slo_app_id_secret | jq .value | tr -d '"')
+          echo ::set-output name=SLO_APP_ID::$SLO_APP_ID
+    # This action is used to get the latency of the coupons application using App Insights API
+    - name: Get Latency
+      uses: fjogeleit/http-request-action@master
+      id: slo
+      with:
+        url: https://api.applicationinsights.io/v1/apps/${{ steps.appinsights_key.outputs.SLO_APP_ID }}${{ inputs.slo_query }}
+        method: "GET"
+        customHeaders: '{"x-api-key":"${{ steps.appinsights_key.outputs.SLO_API_KEY }}"}'
+    # This action is used to evaluate the latency of the coupons application. If it is less than the threshold, the pipeline proceeds to PRD or else it stops release to PRD.
+    - name: Check Latency
+      shell: bash
+      run: |
+        slo=$(echo '${{ steps.slo.outputs.response }}' | jq .tables[].rows[0][1])
+        echo $slo
+        if (( $(echo "$slo ${{ inputs.slo_threshold }}" | awk '{print ($1 > $2)}') ));
+        then
+          exit 1
+        fi
+    # This action is used to get the availability of the coupons application using App Insights API
+    - name: Get Availability
+      uses: fjogeleit/http-request-action@master
+      id: availability
+      with:
+        url: https://api.applicationinsights.io/v1/apps/${{ steps.appinsights_key.outputs.SLO_APP_ID }}${{ inputs.latency_query }}
+        method: "GET"
+        customHeaders: '{"x-api-key":"${{ steps.appinsights_key.outputs.SLO_API_KEY }}"}'
+    # This action is used to evaluate the availability of the coupons application. If it is equal to 1 i.e. it is available, the pipeline proceeds to PRD or else if it is equal to 0 it stops release to PRD.
+    - name: Check Availability
+      shell: bash
+      run: |
+        latency=$(echo '${{ steps.availability.outputs.response }}' | jq .tables[].rows[0][0] | tr -d '"')
+        echo $latency
+        if [ $latency -eq 0 ];
+        then
+          exit 1
+        fi

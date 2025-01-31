@@ -1,0 +1,168 @@
+name: "Deploy to Azure"
+description: "Deploy resources to azure environment"
+inputs:
+  environment:
+    description: "Environment to deploy resources to"
+    required: true
+    default: "dev"
+  MS_TEAMS_WEBHOOK_URI:
+    description: "MS Teams webhook uri"
+    required: true
+  token:
+    description: "GitHub token"
+    required: true
+  AZURE_CREDENTIALS:
+    description: "Azure credentials for login"
+    required: true
+  MYSQL_PASSWORD:
+    description: "MySQL secret"
+    required: true
+  SERVICEPRINCIPAL_PASSWORD:
+    description: "Service principal client secret"
+    required: true
+  PAT:
+    description: "GitHub Personal Access Token"
+    required: true
+  prefix: 
+    description: "Customer prefix"
+    required: true
+  suffix:
+    description: "Team suffix"
+    required: true
+  subscriptionid:
+    description: "Subscription Id where resources will be deployed"
+    required: true
+  repoName:
+    description: "Name of the repository"
+    required: true
+  servicePrincipleObjId:
+    description: "Service Principal Object ID"
+    required: true
+  servicePrincipleClientId: 
+    description: "Service Principal Client ID"
+    required: true
+  location:
+    description: "Location"
+    required: true
+  
+outputs:
+  status: 
+    description: "Status"
+    value: ${{ steps.webAppDeploy.outcome }}
+runs:
+  using: "composite"
+  steps:
+
+    # This action is used to send workflow status to subscribed Microsoft Teams channel
+    - name: Microsoft Teams Deploy Card
+      uses: toko-bifrost/ms-teams-deploy-card@3.1.2
+      if: always()
+      with:
+        # Microsoft Teams webhook URI
+        webhook-uri: ${{ inputs.MS_TEAMS_WEBHOOK_URI }}
+        # Github token
+        github-token: ${{ inputs.token }}
+        # Name of the environment (won't be included in the card if none)
+        environment: ${{ inputs.environment }}
+        # Show the MS Teams card upon failure only of this Github Actions job
+        show-on-failure: true
+        custom-facts: |
+          - name: Stage
+            value: Release to ${{ inputs.environment }}
+
+    - name: Checkout Repository #Checkout the Repo into the agent
+      uses: actions/checkout@v3
+
+    # This action is used to download the build artifacts, which has been published by the latest run of CI pipeline
+    - name: Download build artifacts
+      uses: dawidd6/action-download-artifact@v2
+      with:
+        workflow: continuous-integration.yml
+        path: $GITHUB_WORKSPACE
+
+    - name: Create GitHub deployment for deployment-${{ env.pipeline_env }}
+      uses: chrnorm/deployment-action@releases/v1
+      id: deployment
+      with:
+        token: "${{ inputs.token }}"
+        target_url: https://${{ inputs.prefix }}-dojo-coupon-${{ inputs.environment }}-${{ inputs.suffix }}.azurewebsites.net
+        environment: ${{ inputs.environment }}
+     
+    - name: Login to Azure # Login to Azure with credentials of service principal stored in secrets
+      uses: azure/login@v1
+      with:
+        creds: ${{ inputs.AZURE_CREDENTIALS }}
+
+    #The Bicep linter checks Bicep files for syntax errors and best practice violations. The linter helps enforce coding standards by providing guidance during development
+    - name: Run Bicep linter
+      run: az bicep build --file './IaC/templates/deploy.bicep'
+      shell: bash
+      
+    - name: Provision Azure landing zone # Provision Azure landing zone
+      uses: Azure/arm-deploy@v1
+      id: resources
+      with:
+        failOnStdErr: false
+        scope: 'subscription'
+        region: ${{ inputs.location }}
+        template: ./IaC/templates/deploy.bicep
+        parameters: 'prefix="${{ inputs.prefix }}" suffix="${{ inputs.suffix }}" mySQLAdminLoginPassword="${{ inputs.MYSQL_PASSWORD }}" location="${{ inputs.location }}" environment="${{ inputs.environment }}" azure_keyvault_client_id="${{ inputs.servicePrincipleClientId }}" azure_keyvault_client_key="${{ inputs.SERVICEPRINCIPAL_PASSWORD }}" service_principal_object_id="${{ inputs.servicePrincipleObjId }}"' 
+
+    - name: Generate AppInsights API Key # Generating AppInsights API Key using azure cli commands and saving it in keyvault
+      uses: azure/CLI@1.0.4
+      if: inputs.environment == 'qa'
+      id: appinsights_key
+      with:
+        inlineScript: |
+          az config set extension.use_dynamic_install=yes_without_prompt
+          api_key=$(az monitor app-insights api-key create --api-key mgr-slo --read-properties ReadTelemetry -g '${{ inputs.prefix }}-Dojo-Coupon-${{ inputs.environment }}-${{ inputs.suffix }}' --app '${{ inputs.prefix }}-dojo-coupon-${{ inputs.environment }}-${{ inputs.suffix }}' | jq .apiKey | tr -d '"')
+          echo $api_key
+          if [ -z $api_key ]; then
+            echo "secrets already created"
+          else
+            az keyvault secret set --vault-name "${{ inputs.prefix }}keyvaultcoupons${{ inputs.environment }}${{ inputs.suffix }}" --name "SLO-API-KEY" --value $api_key
+            az keyvault secret set --vault-name "${{ inputs.prefix }}keyvaultcoupons${{ inputs.environment }}${{ inputs.suffix }}" --name "SLO-APP-ID" --value "${{ steps.resources.outputs.appInsightsAppId }}"
+          fi
+
+    #This action is used to deploy the coupons application onto Azure WebApp
+    - name: Azure WebApp
+      id: webAppDeploy
+      uses: Azure/webapps-deploy@v2
+      with:
+        app-name: "${{ inputs.prefix }}-dojo-coupon-${{ inputs.environment }}-${{ inputs.suffix }}"
+        package: "$GITHUB_WORKSPACE/drop/${{ inputs.repoName }}/target"
+
+    #This action is used to "wake up" the webapp after deployment
+    - name: Invoke Website
+      shell: bash
+      if: inputs.environment == 'qa'
+      run: |
+        echo "Invoking https://${{ inputs.prefix }}-dojo-coupon-${{ inputs.environment }}-${{ inputs.suffix }}.azurewebsites.net/"
+        status=$(curl "https://${{ inputs.prefix }}-dojo-coupon-${{ inputs.environment }}-${{ inputs.suffix }}.azurewebsites.net/" -I 2>&1 | awk '/HTTP\// {print $2}')
+        echo $status
+        if [ $status -ne 200 ];
+        then
+          echo "Retrying..."
+          status=$(curl "https://${{ inputs.prefix }}-dojo-coupon-${{ inputs.environment }}-${{ inputs.suffix }}.azurewebsites.net/" -I 2>&1 | awk '/HTTP\// {print $2}')\
+          echo $status
+        fi
+
+    #This action is used to update the deployment status of release if the release is success
+    - name: Update deployment status ${{ inputs.environment }} (success)
+      if: success()
+      uses: chrnorm/deployment-status@releases/v1
+      with:
+        token: "${{ inputs.token }}"
+        target_url: https://${{ inputs.prefix }}-dojo-coupon-${{ inputs.environment }}-${{ inputs.suffix }}.azurewebsites.net
+        state: "success"
+        deployment_id: ${{ steps.deployment.outputs.deployment_id }}
+
+    #This action is used to update the deployment status of release if the release is failure
+    - name: Update deployment status ${{ inputs.environment }} (failure)
+      if: failure()
+      uses: chrnorm/deployment-status@releases/v1
+      with:
+        token: "${{ inputs.token }}"
+        target_url: https://${{ inputs.prefix }}-dojo-coupon-${{ inputs.environment }}-${{ inputs.suffix }}.azurewebsites.net
+        state: "failure"
+        deployment_id: ${{ steps.deployment.outputs.deployment_id }}

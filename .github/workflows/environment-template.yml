@@ -1,0 +1,157 @@
+#Name of the workflow
+name: Environment-Deployment
+
+#Triggers to run the workflow
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+    secrets:
+      MS_TEAMS_WEBHOOK_URI:
+        required: true
+      AZURE_CREDENTIALS:
+        required: true
+      MYSQL_PASSWORD:
+        required: true
+      SERVICEPRINCIPAL_PASSWORD:
+        required: true
+      PAT:
+        required: true
+      SERVICE_PRINCIPAL_OBJECT_ID:
+        required: true
+      SERVICE_PRINCIPAL_CLIENT_ID:
+        required: true
+
+jobs:
+
+  config_variables:
+    runs-on: ubuntu-latest
+    outputs:
+      prefix: ${{ env.prefix}}
+      suffix: ${{ env.suffix}}
+      subscriptionid: ${{ env.subscriptionid}}
+      repoName: ${{ env.repoName}}
+      az_sk_path: ${{ env.az_sk_path}}
+      slo_threshold: ${{ env.slo_threshold}}
+      slo_query: ${{ env.slo_query}}
+      latency_query: ${{ env.latency_query}}
+      location: ${{ env.location}}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      # This action is developed as an IP by the MCS team to use variable groups present in the .github/variables folder. For more details: https://github.com/marketplace/actions/set-variable
+      - name: Set Environment Variables # Set Variables
+        uses: deep-mm/set-variables@v1.0
+        with:
+          variableFileName: "variables"
+  
+#----------------------------------------------------------------------------------------------#
+
+  release:
+    needs: [config_variables]
+    name: Release to ${{ inputs.environment }} # Name of the job
+    runs-on: ubuntu-latest # The type of runner that the job will run on
+    outputs: # Outputs expected from release job to be used in other jobs
+      result: ${{ steps.deploy.outputs.status }}
+    environment: # Environment to which the application will be deployed.
+      name: ${{ inputs.environment }}
+    steps:
+    - name: Checkout Repository #Checkout the Repo into the agent
+      uses: actions/checkout@v3
+    #TODO [CD]: Uncomment the below block to enable the Continuous Delivery action
+    # - name: Deploy to Azure - ${{ inputs.environment }} # Call Composite Action
+    #   uses: ./.github/actions/continuous-delivery
+    #   id: deploy
+    #   with:
+    #     environment: ${{ inputs.environment }}
+    #     MS_TEAMS_WEBHOOK_URI: ${{ secrets.MS_TEAMS_WEBHOOK_URI }}
+    #     token: ${{ github.token }}
+    #     AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+    #     MYSQL_PASSWORD: ${{ secrets.MYSQL_PASSWORD }}
+    #     SERVICEPRINCIPAL_PASSWORD: ${{ secrets.SERVICEPRINCIPAL_PASSWORD }}
+    #     PAT: ${{ secrets.DEVOPS_WITH_GITHUB_PAT }}
+    #     prefix: ${{ needs.config_variables.outputs.prefix}}
+    #     suffix: ${{ needs.config_variables.outputs.suffix}}
+    #     subscriptionid: ${{ needs.config_variables.outputs.subscriptionid}}
+    #     repoName: ${{ needs.config_variables.outputs.repoName}}
+    #     servicePrincipleObjId: ${{ secrets.SERVICE_PRINCIPAL_OBJECT_ID}}
+    #     servicePrincipleClientId: ${{ secrets.SERVICE_PRINCIPAL_CLIENT_ID}}
+    #     location: ${{ needs.config_variables.outputs.location}}
+
+#----------------------------------------------------------------------------------------------#
+
+  BDD_UI_Tests:
+    needs: [config_variables,release] # Only after release stage runs success, this stage will run, or else it will be skipped.
+    runs-on: windows-latest # The type of runner that the job will run on
+    outputs: # Outputs expected from release job to be used in other jobs
+      bdd_status: ${{ steps.tests.outputs.bdd_status }}
+      ui_status: ${{ steps.tests.outputs.ui_status }}
+    if: inputs.environment == 'qa' # This condition ensures that it only runs for qa environment
+    steps:
+    - name: Checkout Repository #Checkout the Repository into the agent
+      uses: actions/checkout@v3
+    #TODO [CQ]: BDD and UI Automated Tests. Uncomment the below block to enable the BDD and UI Automated Test Stage
+    # - name: Run Shift-Right Tests - ${{ inputs.environment }} # Call Composite Action
+    #   uses: ./.github/actions/continuous-quality
+    #   id: tests
+    #   with:
+    #     environment: ${{ inputs.environment }}
+    #     SERVICEPRINCIPAL_PASSWORD: ${{ secrets.SERVICEPRINCIPAL_PASSWORD }}
+    #     MS_TEAMS_WEBHOOK_URI: ${{ secrets.MS_TEAMS_WEBHOOK_URI }}
+    #     token: ${{ github.token }}
+    #     repoName: ${{ needs.config_variables.outputs.repoName}}
+    #     prefix: ${{ needs.config_variables.outputs.prefix}}
+    #     suffix: ${{ needs.config_variables.outputs.suffix}}
+    #     servicePrincipleClientId: ${{ secrets.SERVICE_PRINCIPAL_CLIENT_ID }}
+
+#----------------------------------------------------------------------------------------------#
+
+  AZSK_OWASP_Scan:
+    needs: [config_variables,release] # Only after release stage runs success, this stage will run, or else it will be skipped.
+    runs-on: ubuntu-latest # The type of runner that the job will run on
+    steps:
+    - name: Checkout Repository #Checkout the Repository into the agent
+      uses: actions/checkout@v3
+    #TODO [CS]: AZSK and OWASP Scans. Uncomment the below block of code to enable AZSK and OWASP Scan stage
+    # - name: Run AZSK Scan and OWASP Scan - ${{ inputs.environment }} # Call Composite Action
+    #   uses: ./.github/actions/continuous-security
+    #   id: sec
+    #   with:
+    #     environment: ${{ inputs.environment }}
+    #     AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+    #     MS_TEAMS_WEBHOOK_URI: ${{ secrets.MS_TEAMS_WEBHOOK_URI }}
+    #     token: ${{ github.token }}
+    #     repoName: ${{ needs.config_variables.outputs.repoName}}
+    #     prefix: ${{ needs.config_variables.outputs.prefix}}
+    #     suffix: ${{ needs.config_variables.outputs.suffix}}
+    #     subscriptionid: ${{ needs.config_variables.outputs.subscriptionid}}
+    #     az_sk_path: ${{ needs.config_variables.outputs.az_sk_path}}
+ 
+#----------------------------------------------------------------------------------------------#
+
+  SLO_Check:
+    needs: [config_variables,release] # Only after release stage runs success, this stage will run, or else it will be skipped.
+    runs-on: ubuntu-latest # The type of runner that the job will run on
+    if: inputs.environment == 'qa' # This condition ensures that it only runs for qa environment
+    steps:
+    - name: Checkout Repository #Checkout the Repository into the agent
+      uses: actions/checkout@v3
+    #TODO [CO]: SLO checks. Uncomment the below block to run SLO checks in QA
+    # - name: Run SLO Checks - ${{ inputs.environment }} # Call Composite Action
+    #   uses: ./.github/actions/continuous-operation
+    #   id: slo
+    #   with:
+    #     environment: ${{ inputs.environment }}
+    #     MS_TEAMS_WEBHOOK_URI: ${{ secrets.MS_TEAMS_WEBHOOK_URI }}
+    #     AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+    #     token: ${{ github.token }}
+    #     prefix: ${{ needs.config_variables.outputs.prefix}}
+    #     suffix: ${{ needs.config_variables.outputs.suffix}}
+    #     slo_query: ${{ needs.config_variables.outputs.slo_query}}
+    #     slo_threshold: ${{ needs.config_variables.outputs.slo_threshold}}
+    #     latency_query: ${{ needs.config_variables.outputs.latency_query}}
+
+#----------------------------------------------------------------------------------------------#

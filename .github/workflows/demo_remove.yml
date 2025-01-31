@@ -1,0 +1,47 @@
+name: Remove demo repository
+
+on:
+  workflow_call:
+    inputs:
+      user_name:
+        description: The name of the user who created the repository
+        type: string
+        required: true
+      organization_name:
+        description: The name of the target organization
+        type: string
+        required: true
+      repository_name:
+        description: The name of the template repository
+        type: string
+        required: true
+    secrets:
+      DEVOPS_WITH_GITHUB_PAT: 
+        description: 'GitHub personal access token'
+        required: true
+  workflow_dispatch:
+    inputs:
+      user_name:
+        description: The name of the user who created the repository
+        type: string
+        required: true
+      organization_name:
+        description: The name of the target organization
+        type: string
+        required: true
+      repository_name:
+        description: The name of the template repository
+        type: string
+        required: true  
+
+jobs:
+  remove_demo:
+    name: Remove Demo Repository and Resources
+    runs-on: ubuntu-20.04
+    steps:
+      - name: Push repository changes
+        env:
+          GITHUB_TOKEN: ${{ secrets.DEVOPS_WITH_GITHUB_PAT }}
+          repository: ${{ inputs.repository_name }}-${{ inputs.user_name }}
+        run: |
+          gh repo delete ${{ inputs.organization_name }}/${{ env.repository }} --confirm

@@ -1,0 +1,21 @@
+---
+name: Create copy of demo repository
+description: This issue will trigger an automation to create a copy of this demo repository
+  in the chosen organization.
+title: Create copy of demo repository - [Template]
+labels: "demo,workflow,template"
+assignees:
+  - octocat
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please, fill in the following fields to get started with your GitHub workflows demo repository!🚀
+  - type: input
+    id: user
+    attributes:
+      label: ">>User-Handle<<"
+      description: Who will be the owner of the repository?
+      placeholder: octocat
+    validations:
+      required: true
