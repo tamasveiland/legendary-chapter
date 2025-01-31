@@ -18,7 +18,7 @@ jobs:
       with:
         # The script to run
         script: |
-          echo "Test"
+          console.log('Test')
     - name: Fail run
       if: inputs.simulate_failure == true
       run: exit 1
