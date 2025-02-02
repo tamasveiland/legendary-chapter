@@ -1,0 +1,22 @@
+# Name of the workflow
+name: Handle failed workflow
+
+# Triggers to run the workflow
+on:
+  workflow_run:
+    workflows: ["Validation of the scripts collection"]
+    types:
+      - completed
+  workflow_dispatch:
+
+jobs:
+  on-success:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - run: echo 'The triggering workflow passed'
+  on-failure:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'failure' }}
+    steps:
+      - run: echo 'The triggering workflow failed'
